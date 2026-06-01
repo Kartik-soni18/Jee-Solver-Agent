@@ -1,25 +1,26 @@
-"""Central configuration for the JEE Advanced Math Agent."""
+"""Central configuration for the JEE Advanced Math Agent.
+
+Reads TOGETHER_API_KEY from environment or a local .env file.
+"""
 
 import os
 from dataclasses import dataclass, field
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
+
 
 @dataclass
 class Config:
-    """Application configuration with environment variable overrides."""
+    """Application configuration — Together AI only."""
 
-    LLM_API_KEY: str = field(default_factory=lambda: os.getenv("LLM_API_KEY", ""))
-    LLM_BASE_URL: str = field(
-        default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-    )
-    LLM_MODEL: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini"))
-    TEMPERATURE: float = field(
-        default_factory=lambda: float(os.getenv("TEMPERATURE", "0.1"))
-    )
-    MAX_RETRIES: int = field(default_factory=lambda: int(os.getenv("MAX_RETRIES", "3")))
-    MAX_PROBLEMS: int = field(
-        default_factory=lambda: int(os.getenv("MAX_PROBLEMS", "0"))
-    )
+    LLM_API_KEY: str = field(default_factory=lambda: os.getenv("TOGETHER_API_KEY", ""))
+    LLM_BASE_URL: str = "https://api.together.xyz/v1"
+    LLM_MODEL: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    TEMPERATURE: float = 0.1
+    MAX_RETRIES: int = 3
 
     @property
     def DATA_DIR(self) -> str:
@@ -30,6 +31,6 @@ class Config:
         """Validate configuration and ensure data directory exists."""
         if not self.LLM_API_KEY:
             raise ValueError(
-                "LLM_API_KEY must be set. Provide it via the sidebar or LLM_API_KEY environment variable."
+                "TOGETHER_API_KEY environment variable must be set."
             )
         os.makedirs(self.DATA_DIR, exist_ok=True)

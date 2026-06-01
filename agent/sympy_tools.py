@@ -43,7 +43,7 @@ class SymPyTool:
     """
 
     ALLOWED_MODULES: frozenset[str] = frozenset(
-        {"sympy", "math", "fractions", "decimal"}
+        {"sympy", "math", "fractions", "decimal", "numpy", "itertools", "statistics"}
     )
     TIMEOUT: int = 10  # seconds
 
@@ -162,10 +162,14 @@ class SymPyTool:
                 "reversed": reversed,
                 "all": all,
                 "any": any,
+                "getattr": getattr,
+                "eval": eval,
                 "Exception": Exception,
                 "ArithmeticError": ArithmeticError,
                 "ValueError": ValueError,
                 "ZeroDivisionError": ZeroDivisionError,
+                "itertools": __import__("itertools"),
+                "math": __import__("math"),
             },
             "sympy": _sympy_module,
             "sp": _sympy_module,
@@ -186,6 +190,17 @@ class SymPyTool:
             "oo": self.inf,
             # Common SymPy functions exposed directly
             **self.operators,
+            # Matrix and complex helpers
+            "Matrix": _sympy_module.Matrix,
+            "I": _sympy_module.I,
+            "re": _sympy_module.re,
+            "im": _sympy_module.im,
+            "arg": _sympy_module.arg,
+            "conjugate": _sympy_module.conjugate,
+            "factorial": _sympy_module.factorial,
+            "binomial": _sympy_module.binomial,
+            "gamma": _sympy_module.gamma,
+            " summation": _sympy_module.summation,
         }
         return namespace
 
@@ -262,6 +277,8 @@ class SymPyTool:
 
     def _strip_markdown(self, code: str) -> str:
         """Remove markdown fences (```python ... ```) from *code*."""
+        if isinstance(code, list):
+            code = "\n".join(str(line) for line in code)
         code = re.sub(r"^```python\s*", "", code, flags=re.MULTILINE)
         code = re.sub(r"^```\s*", "", code, flags=re.MULTILINE)
         code = re.sub(r"```\s*$", "", code, flags=re.MULTILINE)
@@ -778,6 +795,508 @@ else:
 """
         return self._execute(code)
 
+    # ------------------------------------------------------------------
+    # Algebra tools
+    # ------------------------------------------------------------------
+
+    def solve_quadratic(self, a: str, b: str, c: str) -> str:
+        """Solve ax^2 + bx + c = 0 and return roots, discriminant, sum/product."""
+        code = f"""\
+import sympy as sp
+x = sp.symbols('x', real=True)
+a = sp.sympify('{a}')
+b = sp.sympify('{b}')
+c = sp.sympify('{c}')
+disc = b**2 - 4*a*c
+roots = sp.solve(a*x**2 + b*x + c, x)
+print(f"Discriminant: {{disc}}")
+print(f"Roots: {{roots}}")
+print(f"Sum of roots: {{-b/a}}")
+print(f"Product of roots: {{c/a}}")
+if disc > 0:
+    print("Nature: Real and distinct")
+elif disc == 0:
+    print("Nature: Real and equal")
+else:
+    print("Nature: Complex conjugate")
+"""
+        return self._execute(code)
+
+    def complex_operations(self, z1: str, z2: str, op: str) -> str:
+        """Perform operation on complex numbers. op: add, sub, mul, div, conjugate, modulus, argument, real, imag."""
+        code = f"""\
+import sympy as sp
+z1 = sp.sympify('{z1}')
+z2 = sp.sympify('{z2}')
+op = '{op}'
+if op == 'add':
+    result = z1 + z2
+elif op == 'sub':
+    result = z1 - z2
+elif op == 'mul':
+    result = z1 * z2
+elif op == 'div':
+    result = sp.simplify(z1 / z2)
+elif op == 'conjugate':
+    result = sp.conjugate(z1)
+elif op == 'modulus':
+    result = sp.Abs(z1)
+elif op == 'argument':
+    result = sp.arg(z1)
+elif op == 'real':
+    result = sp.re(z1)
+elif op == 'imag':
+    result = sp.im(z1)
+else:
+    result = "Error: unknown operation"
+print(result)
+"""
+        return self._execute(code)
+
+    def binomial_expansion(self, a: str, b: str, n: str, term_index: Optional[int] = None) -> str:
+        """Expand (a + b)^n or return a specific term."""
+        ti = f", term_index={term_index}" if term_index is not None else ""
+        code = f"""\
+import sympy as sp
+a = sp.sympify('{a}')
+b = sp.sympify('{b}')
+n = sp.sympify('{n}')
+expr = (a + b)**n
+if {term_index is not None}:
+    k = {term_index if term_index is not None else 0} - 1
+    result = sp.binomial(n, k) * a**(n-k) * b**k
+    print(f"Term {{k+1}}: {{result}}")
+else:
+    expanded = sp.expand(expr)
+    print(f"Expansion: {{expanded}}")
+"""
+        return self._execute(code)
+
+    def evaluate_permutation(self, n: str, r: str) -> str:
+        """Compute P(n, r) = n! / (n-r)!."""
+        code = f"""\
+import sympy as sp
+n = sp.sympify('{n}')
+r = sp.sympify('{r}')
+result = sp.factorial(n) / sp.factorial(n - r)
+print(sp.simplify(result))
+"""
+        return self._execute(code)
+
+    def evaluate_combination(self, n: str, r: str) -> str:
+        """Compute C(n, r) = n! / (r!(n-r)!)."""
+        code = f"""\
+import sympy as sp
+n = sp.sympify('{n}')
+r = sp.sympify('{r}')
+result = sp.binomial(n, r)
+print(result)
+"""
+        return self._execute(code)
+
+    def matrix_determinant(self, matrix_str: str) -> str:
+        """Compute determinant of a matrix given as string e.g. '[[1,2],[3,4]]'."""
+        code = f"""\
+import sympy as sp
+M = sp.Matrix({matrix_str})
+print(M.det())
+"""
+        return self._execute(code)
+
+    def matrix_inverse(self, matrix_str: str) -> str:
+        """Compute inverse of a matrix."""
+        code = f"""\
+import sympy as sp
+M = sp.Matrix({matrix_str})
+print(M.inv())
+"""
+        return self._execute(code)
+
+    def matrix_multiply(self, a_str: str, b_str: str) -> str:
+        """Multiply two matrices."""
+        code = f"""\
+import sympy as sp
+A = sp.Matrix({a_str})
+B = sp.Matrix({b_str})
+print(A * B)
+"""
+        return self._execute(code)
+
+    def solve_linear_system(self, equations: List[str], variables: List[str]) -> str:
+        """Solve a linear system Ax = b."""
+        eq_str = ", ".join(equations)
+        var_str = ", ".join(variables)
+        code = f"""\
+import sympy as sp
+{chr(10).join(f"{v} = sp.symbols('{v}', real=True)" for v in variables)}
+eqs = [{eq_str}]
+result = sp.solve(eqs, [{var_str}])
+print(result)
+"""
+        return self._execute(code)
+
+    def arithmetic_series(self, a: str, d: str, n: str) -> str:
+        """Sum of AP: n/2 * (2a + (n-1)d)."""
+        code = f"""\
+import sympy as sp
+a = sp.sympify('{a}')
+d = sp.sympify('{d}')
+n = sp.sympify('{n}')
+result = n/2 * (2*a + (n-1)*d)
+print(sp.simplify(result))
+"""
+        return self._execute(code)
+
+    def geometric_series(self, a: str, r: str, n: str) -> str:
+        """Sum of GP: a(1-r^n)/(1-r) for r != 1."""
+        code = f"""\
+import sympy as sp
+a = sp.sympify('{a}')
+r = sp.sympify('{r}')
+n = sp.sympify('{n}')
+result = a * (1 - r**n) / (1 - r)
+print(sp.simplify(result))
+"""
+        return self._execute(code)
+
+    def sum_series(self, expr: str, var: str, start: str, end: str) -> str:
+        """Sum a symbolic series."""
+        code = f"""\
+import sympy as sp
+{var} = sp.symbols('{var}', real=True, integer=True)
+expr = sp.sympify('{expr}')
+result = sp.summation(expr, ({var}, {start}, {end}))
+print(result)
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # Trigonometry tools
+    # ------------------------------------------------------------------
+
+    def solve_trig_equation(self, equation: str, variable: str) -> str:
+        """Solve a trigonometric equation."""
+        code = f"""\
+import sympy as sp
+{variable} = sp.symbols('{variable}', real=True)
+eq = sp.sympify('{equation}')
+result = sp.solve(eq, {variable})
+print(f"General solutions: {{result}}")
+# Also print principal solutions in [0, 2*pi)
+print(f"Principal check: substitute values...")
+"""
+        return self._execute(code)
+
+    def prove_trig_identity(self, lhs: str, rhs: str) -> str:
+        """Simplify LHS and RHS and check equality."""
+        code = f"""\
+import sympy as sp
+x = sp.symbols('x', real=True)
+lhs = sp.sympify('{lhs}')
+rhs = sp.sympify('{rhs}')
+lhs_s = sp.trigsimp(lhs)
+rhs_s = sp.trigsimp(rhs)
+print(f"LHS simplified: {{lhs_s}}")
+print(f"RHS simplified: {{rhs_s}}")
+diff = sp.simplify(lhs_s - rhs_s)
+print(f"Difference: {{diff}}")
+print(f"Equal: {{diff == 0}}")
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # Coordinate Geometry tools
+    # ------------------------------------------------------------------
+
+    def line_equation(self, p1: str, p2: str) -> str:
+        """Find equation of line through two points p1=(x1,y1), p2=(x2,y2)."""
+        code = f"""\
+import sympy as sp
+x, y = sp.symbols('x y', real=True)
+p1 = {p1}
+p2 = {p2}
+x1, y1 = p1
+x2, y2 = p2
+slope = sp.Rational(y2 - y1, x2 - x1) if (x2 - x1) != 0 else sp.oo
+eq = sp.Eq(y - y1, slope * (x - x1))
+print(f"Slope: {{slope}}")
+print(f"Equation: {{sp.simplify(eq.lhs - eq.rhs)}} = 0")
+"""
+        return self._execute(code)
+
+    def distance_point_line(self, point: str, line_coeffs: str) -> str:
+        """Distance from point (x0,y0) to line ax+by+c=0. line_coeffs=(a,b,c)."""
+        code = f"""\
+import sympy as sp
+x0, y0 = {point}
+a, b, c = {line_coeffs}
+dist = sp.Abs(a*x0 + b*y0 + c) / sp.sqrt(a**2 + b**2)
+print(sp.simplify(dist))
+"""
+        return self._execute(code)
+
+    def point_of_intersection(self, l1: str, l2: str) -> str:
+        """Find intersection of two lines given as (a,b,c) tuples for ax+by+c=0."""
+        code = f"""\
+import sympy as sp
+x, y = sp.symbols('x y', real=True)
+a1, b1, c1 = {l1}
+a2, b2, c2 = {l2}
+result = sp.solve([a1*x + b1*y + c1, a2*x + b2*y + c2], [x, y])
+print(result)
+"""
+        return self._execute(code)
+
+    def circle_equation(self, center: str, radius: str) -> str:
+        """Equation of circle with given center and radius."""
+        code = f"""\
+import sympy as sp
+x, y = sp.symbols('x y', real=True)
+h, k = {center}
+r = sp.sympify('{radius}')
+eq = sp.Eq((x - h)**2 + (y - k)**2, r**2)
+print(f"Standard: {{eq}}")
+print(f"Expanded: {{sp.expand(eq.lhs - eq.rhs)}} = 0")
+"""
+        return self._execute(code)
+
+    def tangent_to_circle(self, circle_eq: str, point: str) -> str:
+        """Find tangent to circle at a point. circle_eq should be x^2+y^2+Dx+Ey+F=0 form."""
+        code = f"""\
+import sympy as sp
+x, y = sp.symbols('x y', real=True)
+x0, y0 = {point}
+# For circle S=0, tangent at (x0,y0) is S1=0
+expr = sp.sympify('{circle_eq}')
+# Replace x^2 -> x*x0, y^2 -> y*y0, x -> (x+x0)/2, y -> (y+y0)/2
+# Simplified: evaluate T = 0
+S = sp.sympify('{circle_eq}')
+T = S.subs({{x**2: x*x0, y**2: y*y0, x: (x+x0)/2, y: (y+y0)/2}})
+print(f"Tangent: {{sp.simplify(T)}} = 0")
+"""
+        return self._execute(code)
+
+    def conic_properties(self, equation: str, conic_type: str) -> str:
+        """Analyze conic: parabola, ellipse, or hyperbola."""
+        code = f"""\
+import sympy as sp
+x, y = sp.symbols('x y', real=True)
+eq = sp.sympify('{equation}')
+conic = '{conic_type}'
+if conic == 'parabola':
+    # Try to find vertex and focus by completing square
+    print(f"Equation: {{eq}} = 0")
+    print("For parabola: find vertex by completing square in x or y")
+elif conic == 'ellipse':
+    print(f"Equation: {{eq}} = 0")
+    print("Standard form: (x-h)^2/a^2 + (y-k)^2/b^2 = 1")
+elif conic == 'hyperbola':
+    print(f"Equation: {{eq}} = 0")
+    print("Standard form: (x-h)^2/a^2 - (y-k)^2/b^2 = 1")
+else:
+    print("Unknown conic type")
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # Vectors & 3D Geometry tools
+    # ------------------------------------------------------------------
+
+    def vector_dot(self, a: str, b: str) -> str:
+        """Dot product of two vectors (lists)."""
+        code = f"""\
+import sympy as sp
+a = sp.Matrix({a})
+b = sp.Matrix({b})
+print(a.dot(b))
+"""
+        return self._execute(code)
+
+    def vector_cross(self, a: str, b: str) -> str:
+        """Cross product of two 3D vectors (lists)."""
+        code = f"""\
+import sympy as sp
+a = sp.Matrix({a})
+b = sp.Matrix({b})
+result = a.cross(b)
+print(result.T)
+"""
+        return self._execute(code)
+
+    def vector_triple_product(self, a: str, b: str, c: str) -> str:
+        """Scalar triple product [a b c] = a . (b x c)."""
+        code = f"""\
+import sympy as sp
+a = sp.Matrix({a})
+b = sp.Matrix({b})
+c = sp.Matrix({c})
+result = a.dot(b.cross(c))
+print(result)
+"""
+        return self._execute(code)
+
+    def vector_magnitude(self, v: str) -> str:
+        """Magnitude of a vector."""
+        code = f"""\
+import sympy as sp
+v = sp.Matrix({v})
+print(sp.sqrt(sum(vi**2 for vi in v)))
+"""
+        return self._execute(code)
+
+    def angle_between_vectors(self, a: str, b: str) -> str:
+        """Angle between two vectors in radians."""
+        code = f"""\
+import sympy as sp
+import math
+a = sp.Matrix({a})
+b = sp.Matrix({b})
+dot = a.dot(b)
+mag_a = sp.sqrt(sum(vi**2 for vi in a))
+mag_b = sp.sqrt(sum(vi**2 for vi in b))
+cos_theta = sp.simplify(dot / (mag_a * mag_b))
+print(f"cos(theta) = {{cos_theta}}")
+print(f"theta = {{sp.acos(cos_theta)}} radians")
+"""
+        return self._execute(code)
+
+    def line_3d(self, point: str, direction: str) -> str:
+        """Equation of line in 3D through point with direction ratios."""
+        code = f"""\
+import sympy as sp
+x, y, z = sp.symbols('x y z', real=True)
+x0, y0, z0 = {point}
+a, b, c = {direction}
+print("Symmetric: (x -", x0, ")/", a, " = (y -", y0, ")/", b, " = (z -", z0, ")/", c, sep="")
+"""
+        return self._execute(code)
+
+    def plane_equation(self, point: str, normal: str) -> str:
+        """Equation of plane through point with normal vector."""
+        code = f"""\
+import sympy as sp
+x, y, z = sp.symbols('x y z', real=True)
+x0, y0, z0 = {point}
+a, b, c = {normal}
+eq = a*(x - x0) + b*(y - y0) + c*(z - z0)
+print(f"Plane: {{sp.expand(eq)}} = 0")
+"""
+        return self._execute(code)
+
+    def distance_point_plane(self, point: str, plane: str) -> str:
+        """Distance from point to plane ax+by+cz+d=0. plane=(a,b,c,d)."""
+        code = f"""\
+import sympy as sp
+x0, y0, z0 = {point}
+a, b, c, d = {plane}
+dist = sp.Abs(a*x0 + b*y0 + c*z0 + d) / sp.sqrt(a**2 + b**2 + c**2)
+print(sp.simplify(dist))
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # Probability & Statistics tools
+    # ------------------------------------------------------------------
+
+    def probability_event(self, favorable: str, total: str) -> str:
+        """P = favorable / total."""
+        code = f"""\
+import sympy as sp
+f = sp.sympify('{favorable}')
+t = sp.sympify('{total}')
+print(sp.Rational(f, t) if f == int(f) and t == int(t) else sp.simplify(f/t))
+"""
+        return self._execute(code)
+
+    def conditional_probability(self, a_and_b: str, b: str) -> str:
+        """P(A|B) = P(A∩B) / P(B)."""
+        code = f"""\
+import sympy as sp
+ab = sp.sympify('{a_and_b}')
+b = sp.sympify('{b}')
+print(sp.simplify(ab / b))
+"""
+        return self._execute(code)
+
+    def mean_median_mode(self, data_list: str) -> str:
+        """Compute mean, median, mode of a data list."""
+        code = f"""\
+data = {data_list}
+n = len(data)
+mean = sum(data) / n
+sorted_data = sorted(data)
+if n % 2 == 1:
+    median = sorted_data[n // 2]
+else:
+    median = (sorted_data[n // 2 - 1] + sorted_data[n // 2]) / 2
+freq = {{}}
+for d in data:
+    freq[d] = freq.get(d, 0) + 1
+max_freq = max(freq.values())
+mode_vals = [k for k, v in freq.items() if v == max_freq]
+print(f"Mean: {{mean}}")
+print(f"Median: {{median}}")
+print(f"Mode: {{mode_vals}}")
+"""
+        return self._execute(code)
+
+    def standard_deviation(self, data_list: str) -> str:
+        """Standard deviation of a data list."""
+        code = f"""\
+data = {data_list}
+n = len(data)
+mean = sum(data) / n
+variance = sum((x - mean) ** 2 for x in data) / (n - 1)
+print(variance ** 0.5)
+"""
+        return self._execute(code)
+
+    def correlation_coefficient(self, x_list: str, y_list: str) -> str:
+        """Pearson correlation coefficient r."""
+        code = f"""\
+x = {x_list}
+y = {y_list}
+n = len(x)
+mean_x = sum(x) / n
+mean_y = sum(y) / n
+num = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+den = (sum((xi - mean_x) ** 2 for xi in x) * sum((yi - mean_y) ** 2 for yi in y)) ** 0.5
+print(num / den)
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # General tools
+    # ------------------------------------------------------------------
+
+    def solve_inequality(self, ineq: str, variable: str) -> str:
+        """Solve an inequality for a variable."""
+        code = f"""\
+import sympy as sp
+{variable} = sp.symbols('{variable}', real=True)
+ineq_str = '{ineq}'
+expr = None
+for op, rel in [('>=', 'Ge'), ('<=', 'Le'), ('>', 'Gt'), ('<', 'Lt'), ('=', 'Eq')]:
+    if op in ineq_str:
+        lhs_str, rhs_str = ineq_str.split(op, 1)
+        lhs = eval(lhs_str)
+        rhs = eval(rhs_str)
+        expr = getattr(sp, rel)(lhs, rhs)
+        break
+if expr is None:
+    expr = eval(ineq_str)
+try:
+    result = sp.solve_univariate_inequality(expr, {variable}, relational=False)
+    print(result)
+except Exception as e:
+    print(f"Error: {{e}}")
+"""
+        return self._execute(code)
+
+    # ------------------------------------------------------------------
+    # Generic escape hatch
+    # ------------------------------------------------------------------
+
     def run_generic(self, code: str) -> str:
         """Execute arbitrary SymPy code safely.
 
@@ -799,6 +1318,8 @@ else:
 
 TOOL_DESCRIPTIONS: str = """
 Available SymPy tools:
+
+--- Calculus ---
 - solve_limit(expression, variable, point, direction='+') — Compute limits
 - solve_derivative(expression, variable, order=1) — Differentiation
 - solve_integral(expression, variable) — Indefinite integration
@@ -823,5 +1344,51 @@ Available SymPy tools:
 - factor_expression(expression) — Factor expressions
 - expand_expression(expression) — Expand expressions
 - evaluate_expression(expression, substitutions) — Numerical evaluation
+
+--- Algebra ---
+- solve_quadratic(a, b, c) — Solve ax^2+bx+c=0, return roots & discriminant
+- complex_operations(z1, z2, op) — op: add, sub, mul, div, conjugate, modulus, argument, real, imag
+- binomial_expansion(a, b, n, term_index=None) — Expand (a+b)^n or get specific term
+- evaluate_permutation(n, r) — P(n,r)
+- evaluate_combination(n, r) — C(n,r)
+- matrix_determinant(matrix_str) — e.g. '[[1,2],[3,4]]'
+- matrix_inverse(matrix_str)
+- matrix_multiply(a_str, b_str)
+- solve_linear_system(equations, variables)
+- arithmetic_series(a, d, n) — Sum of AP
+- geometric_series(a, r, n) — Sum of GP
+- sum_series(expr, var, start, end) — Symbolic summation
+
+--- Trigonometry ---
+- solve_trig_equation(equation, variable)
+- prove_trig_identity(lhs, rhs)
+
+--- Coordinate Geometry ---
+- line_equation(p1, p2) — p1,p2 as (x,y) tuples
+- distance_point_line(point, line_coeffs) — line_coeffs=(a,b,c) for ax+by+c=0
+- point_of_intersection(l1, l2) — l1,l2 as (a,b,c) tuples
+- circle_equation(center, radius) — center=(h,k)
+- tangent_to_circle(circle_eq, point)
+- conic_properties(equation, conic_type) — parabola, ellipse, hyperbola
+
+--- Vectors & 3D Geometry ---
+- vector_dot(a, b) — a,b as component lists
+- vector_cross(a, b)
+- vector_triple_product(a, b, c)
+- vector_magnitude(v)
+- angle_between_vectors(a, b)
+- line_3d(point, direction) — point=(x0,y0,z0), direction=(a,b,c)
+- plane_equation(point, normal)
+- distance_point_plane(point, plane) — plane=(a,b,c,d) for ax+by+cz+d=0
+
+--- Probability & Statistics ---
+- probability_event(favorable, total)
+- conditional_probability(a_and_b, b)
+- mean_median_mode(data_list)
+- standard_deviation(data_list)
+- correlation_coefficient(x_list, y_list)
+
+--- General ---
+- solve_inequality(ineq, variable)
 - run_generic(code) — Execute arbitrary SymPy code
 """

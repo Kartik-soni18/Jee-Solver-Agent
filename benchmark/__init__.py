@@ -1,6 +1,7 @@
-from benchmark.comparison import ComparisonAnalyzer
-from benchmark.jee_evaluator import JEEEValuator
 from benchmark.jee_loader import JEELoader
-from benchmark.results import ResultsStore
+from benchmark.jee_evaluator import JEEEValuator
 
-__all__ = ["JEELoader", "JEEEValuator", "ResultsStore", "ComparisonAnalyzer"]
+__all__ = [
+    "JEELoader",
+    "JEEEValuator",
+]

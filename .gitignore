@@ -69,7 +69,50 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Project-specific
+# --- Project-specific ---
+
+# Streamlit secrets (local development)
+.streamlit/secrets.toml
+
+# Chroma vector database (generated at runtime)
+data/chroma_db/
+
+# Problem result JSONs (generated at runtime)
 data/*.json
 !data/.gitkeep
+
+# Logs
 *.log
+
+# Local model caches / weights
+*.onnx
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Image uploads / screenshots accidentally dropped in repo root
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.bmp
+/*.tiff
+/*.webp
+
+# Keep assets folder if you add static images later
+!assets/
+!assets/**
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+*.ipynb
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+.kimi/*

@@ -1,904 +1,917 @@
 """Streamlit interface for the JEE Advanced Math Agent.
 
-A professional dashboard with LaTeX rendering for JEE calculus problems,
-including benchmark evaluation, per-type/per-difficulty breakdowns,
-and interactive visualizations.
+Photomath-inspired clean, modern UI:
+- Light theme with soft shadows and rounded corners
+- Large camera/image upload as primary input
+- Step-by-step solution timeline
+- Clean math rendering with ample whitespace
 """
 
+import base64
+import io
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import time
+
+from config import Config
+from agent.jee_graph import JEEAgent
+from benchmark.jee_evaluator import JEEEValuator
+from benchmark.jee_loader import JEELoader
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="JEE Advanced Math Agent",
-    page_icon="🔷",
+    page_title="Math Solver",
+    page_icon="📐",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
-# Color palette for problem types
+# CSS: Clean Photomath-inspired light theme
 # ---------------------------------------------------------------------------
-PROBLEM_TYPE_COLORS = {
-    "limits": "#3498db",
-    "differentiation": "#e74c3c",
-    "integration": "#2ecc71",
-    "definite_integrals": "#9b59b6",
-    "differential_equations": "#f39c12",
-    "maxima_minima": "#1abc9c",
-    "tangent_normal": "#e67e22",
-    "area": "#34495e",
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0');
+
+    .stApp {
+        background: linear-gradient(180deg, #f8f9fb 0%, #ffffff 100%) !important;
+    }
+
+    .main .block-container {
+        background: transparent !important;
+        padding-top: 1rem !important;
+        max-width: 1100px !important;
+    }
+
+    /* Hide default streamlit elements */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* --- Top Navbar --- */
+    .navbar {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        padding: 16px 24px;
+        margin: -1rem -1rem 0 -1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+
+    .navbar-icon {
+        font-size: 1.4rem;
+    }
+
+    .navbar-title {
+        font-family: 'Inter', sans-serif;
+        color: #ffffff !important;
+        font-size: 1.1rem;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+    }
+
+    /* Typography */
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', sans-serif !important;
+        color: #1a1a2e !important;
+        font-weight: 700 !important;
+    }
+
+    p, div, span, label {
+        font-family: 'Inter', sans-serif !important;
+        color: #4a4a5a !important;
+    }
+
+    span[data-testid="stIconMaterial"] {
+        font-family: 'Material Symbols Outlined', 'Material Icons', sans-serif !important;
+    }
+
+    /* --- Cards --- */
+    .math-card {
+        background: #ffffff !important;
+        border: 1px solid #e8e8f0 !important;
+        border-radius: 20px !important;
+        padding: 24px !important;
+        margin-bottom: 16px !important;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04) !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .math-card:hover {
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* --- Primary Button (Solve) --- */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+        border: none !important;
+        border-radius: 16px !important;
+        color: #ffffff !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        padding: 16px 32px !important;
+        box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35) !important;
+        transition: all 0.2s ease !important;
+        width: 100% !important;
+    }
+
+    .stButton > button[kind="primary"] p,
+    .stButton > button[kind="primary"] span,
+    .stButton > button[kind="primary"] div {
+        color: #ffffff !important;
+    }
+
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 24px rgba(99, 102, 241, 0.45) !important;
+    }
+
+    .stButton > button[kind="primary"]:active {
+        transform: translateY(0) !important;
+    }
+
+    /* --- Secondary Buttons --- */
+    .stButton > button {
+        background: #f0f0f5 !important;
+        border: 1px solid #e0e0e8 !important;
+        border-radius: 12px !important;
+        color: #4a4a5a !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+        padding: 10px 20px !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .stButton > button:hover {
+        background: #e8e8f0 !important;
+        border-color: #d0d0e0 !important;
+    }
+
+    /* Example card buttons */
+    .math-card + .stButton > button {
+        background: #ffffff !important;
+        border: 1px solid #6366f1 !important;
+        color: #6366f1 !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+    }
+
+    .math-card + .stButton > button:hover {
+        background: #f5f5ff !important;
+    }
+
+    /* --- Text area --- */
+    .stTextArea > div,
+    .stTextArea [data-baseweb="textarea"] {
+        border: none !important;
+        background: transparent !important;
+    }
+
+    .stTextArea textarea {
+        background: #ffffff !important;
+        border: 2px solid #e8e8f0 !important;
+        border-radius: 16px !important;
+        color: #1a1a2e !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 1rem !important;
+        line-height: 1.6 !important;
+        padding: 16px !important;
+        transition: all 0.2s ease !important;
+        resize: vertical !important;
+    }
+
+    .stTextArea textarea:focus {
+        border-color: #6366f1 !important;
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1) !important;
+        outline: none !important;
+    }
+
+    .stTextArea [data-baseweb="base-input"] {
+        border: none !important;
+        background: transparent !important;
+    }
+
+    /* --- File uploader --- */
+    .stFileUploader {
+        background: #ffffff !important;
+        border: 2px dashed #c7c7d5 !important;
+        border-radius: 16px !important;
+        padding: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .stFileUploader:hover {
+        border-color: #6366f1 !important;
+        background: #fafaff !important;
+    }
+
+    .stFileUploader > section,
+    .stFileUploader > section > div,
+    .stFileUploader [data-testid="stFileUploaderDropzone"] {
+        background: transparent !important;
+    }
+
+    .stFileUploader button,
+    .stFileUploader [data-testid="stBaseButton-secondary"] {
+        background: #f0f0f5 !important;
+        border: 1px solid #d0d0e0 !important;
+        border-radius: 10px !important;
+        color: #6366f1 !important;
+        font-weight: 500 !important;
+    }
+
+    .stFileUploader button:hover {
+        background: #e8e8f5 !important;
+        border-color: #6366f1 !important;
+    }
+
+    .stFileUploader p,
+    .stFileUploader span,
+    .stFileUploader small {
+        color: #6b7280 !important;
+    }
+
+    .stFileUploader > label {
+        display: none !important;
+    }
+
+    /* --- Metrics --- */
+    [data-testid="stMetric"] {
+        background: #ffffff !important;
+        border: 1px solid #e8e8f0 !important;
+        border-radius: 16px !important;
+        padding: 16px !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-family: 'Inter', sans-serif !important;
+        color: #8a8a9a !important;
+        font-size: 0.7rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        font-family: 'Inter', sans-serif !important;
+        color: #1a1a2e !important;
+        font-size: 1.4rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* --- Expander --- */
+    .streamlit-expanderHeader {
+        background: #ffffff !important;
+        border: 1px solid #e8e8f0 !important;
+        border-radius: 14px !important;
+        color: #1a1a2e !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+        padding: 14px 18px !important;
+    }
+
+    .streamlit-expanderContent {
+        background: #ffffff !important;
+        border: 1px solid #e8e8f0 !important;
+        border-top: none !important;
+        border-radius: 0 0 14px 14px !important;
+        padding: 0 18px 18px !important;
+    }
+
+    /* --- Code blocks --- */
+    .stCode pre {
+        background: #f8f9fb !important;
+        border: 1px solid #e8e8f0 !important;
+        border-radius: 12px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+
+    /* --- Scrollbar --- */
+    ::-webkit-scrollbar { width: 6px !important; }
+    ::-webkit-scrollbar-track { background: transparent !important; }
+    ::-webkit-scrollbar-thumb { background: #c7c7d5 !important; border-radius: 3px !important; }
+    ::-webkit-scrollbar-thumb:hover { background: #a0a0b0 !important; }
+
+    /* --- Divider --- */
+    hr {
+        border: none !important;
+        height: 1px !important;
+        background: linear-gradient(90deg, transparent, #e8e8f0, transparent) !important;
+        margin: 24px 0 !important;
+    }
+
+    /* --- Step timeline --- */
+    .step-card {
+        background: #ffffff;
+        border: 1px solid #e8e8f0;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 12px;
+        position: relative;
+        transition: all 0.2s ease;
+    }
+
+    .step-card:hover {
+        border-color: #c7c7ff;
+        box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+    }
+
+    .step-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        color: #fff;
+        border-radius: 50%;
+        font-size: 0.8rem;
+        font-weight: 700;
+        margin-right: 12px;
+    }
+
+    .step-title {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        color: #1a1a2e;
+        font-size: 0.95rem;
+    }
+
+    /* --- Answer display --- */
+    .answer-box {
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        border-radius: 20px;
+        padding: 32px;
+        text-align: center;
+        color: #ffffff;
+        box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+        margin-bottom: 16px;
+    }
+
+    .answer-label {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        opacity: 0.8;
+        margin-bottom: 8px;
+    }
+
+    .answer-value {
+        font-family: 'Inter', sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #ffffff;
+    }
+
+    /* --- Badges --- */
+    .topic-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        border-radius: 100px;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+    }
+
+    /* --- Spinner --- */
+    .stSpinner > div {
+        border-color: rgba(99, 102, 241, 0.2) !important;
+        border-top-color: #6366f1 !important;
+    }
+
+    /* --- Image preview --- */
+    .img-preview {
+        border-radius: 12px;
+        border: 1px solid #e8e8f0;
+        overflow: hidden;
+    }
+
+    /* --- Processing state --- */
+    .processing-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: #f0f0ff;
+        border: 1px solid #d0d0ff;
+        border-radius: 100px;
+        color: #6366f1;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+
+    .dot-pulse {
+        width: 6px;
+        height: 6px;
+        background: #6366f1;
+        border-radius: 50%;
+        animation: dotPulse 1.4s ease-in-out infinite;
+    }
+
+    .dot-pulse:nth-child(2) { animation-delay: 0.2s; }
+    .dot-pulse:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes dotPulse {
+        0%, 100% { opacity: 0.3; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1.2); }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------------
+# Color helpers
+# ---------------------------------------------------------------------------
+TYPE_BADGE_STYLES = {
+    "limits": "background:#fef3c7; color:#d97706;",
+    "differentiation": "background:#dbeafe; color:#2563eb;",
+    "integration": "background:#d1fae5; color:#059669;",
+    "definite_integrals": "background:#d1fae5; color:#059669;",
+    "differential_equations": "background:#fce7f3; color:#db2777;",
+    "maxima_minima": "background:#ffedd5; color:#ea580c;",
+    "tangent_normal": "background:#e0e7ff; color:#4f46e5;",
+    "area": "background:#ccfbf1; color:#0d9488;",
+    "complex_numbers": "background:#f3e8ff; color:#7c3aed;",
+    "quadratic": "background:#fee2e2; color:#dc2626;",
+    "permutations_combinations": "background:#ecfccb; color:#65a30d;",
+    "binomial_theorem": "background:#cffafe; color:#0891b2;",
+    "matrices_determinants": "background:#e0f2fe; color:#0284c7;",
+    "probability": "background:#fce7f3; color:#db2777;",
+    "sequences_series": "background:#fef9c3; color:#ca8a04;",
+    "trigonometric_identities": "background:#dbeafe; color:#2563eb;",
+    "trigonometric_equations": "background:#dbeafe; color:#2563eb;",
+    "solution_of_triangles": "background:#dbeafe; color:#2563eb;",
+    "inverse_trig": "background:#dbeafe; color:#2563eb;",
+    "straight_lines": "background:#f3e8ff; color:#7c3aed;",
+    "circles": "background:#f3e8ff; color:#7c3aed;",
+    "parabola": "background:#f3e8ff; color:#7c3aed;",
+    "ellipse": "background:#f3e8ff; color:#7c3aed;",
+    "hyperbola": "background:#f3e8ff; color:#7c3aed;",
+    "vectors": "background:#ffedd5; color:#ea580c;",
+    "three_d_geometry": "background:#ffedd5; color:#ea580c;",
+    "statistics": "background:#ccfbf1; color:#0d9488;",
+    "mathematical_reasoning": "background:#e0e7ff; color:#4f46e5;",
 }
 
-DIFFICULTY_COLORS = {
-    "easy": "#2ecc71",
-    "medium": "#f39c12",
-    "hard": "#e74c3c",
+DIFFICULTY_BADGE_STYLES = {
+    "easy": "background:#d1fae5; color:#059669;",
+    "medium": "background:#fef3c7; color:#d97706;",
+    "hard": "background:#fee2e2; color:#dc2626;",
 }
 
-DIFFICULTY_EMOJI = {
-    "easy": "🟢",
-    "medium": "🟡",
-    "hard": "🔴",
-}
+# ---------------------------------------------------------------------------
+# Load 3 curated example problems
+# ---------------------------------------------------------------------------
+@st.cache_data
+def get_example_problems():
+    """Return 3 diverse example problems from the dataset."""
+    all_problems = JEELoader.load_problems()
+    examples = []
+    for target_type in ["limits", "differentiation", "integration"]:
+        for p in all_problems:
+            if p["problem_type"] == target_type:
+                examples.append(p)
+                break
+    return examples
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
+# Initialize config & agent
 # ---------------------------------------------------------------------------
-def sidebar_config():
-    """Render the configuration sidebar and return a validated Config."""
-    st.sidebar.title("🔷 JEE Advanced Configuration")
-    st.sidebar.markdown("---")
+@st.cache_resource
+def get_config():
+    return Config()
 
-    # ── API Configuration ────────────────────────────────────────────────
-    st.sidebar.subheader("🤖 Model Settings")
 
-    api_key = st.sidebar.text_input(
-        "LLM API Key",
-        value="",
-        type="password",
-        help="Your OpenAI-compatible API key",
-    )
-    base_url = st.sidebar.text_input(
-        "LLM Base URL",
-        value="https://api.openai.com/v1",
-        help="API base URL (e.g., OpenAI, Groq, Anyscale)",
-    )
-    model = st.sidebar.text_input(
-        "LLM Model",
-        value="gpt-4o-mini",
-        help="Model name (e.g., gpt-4o-mini, gpt-4o, llama-3.1-70b)",
-    )
-    temperature = st.sidebar.slider(
-        "Temperature",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.1,
-        step=0.05,
-        help="Lower = more deterministic, Higher = more creative",
-    )
-    max_retries = st.sidebar.slider(
-        "Max Retries",
-        min_value=0,
-        max_value=5,
-        value=3,
-        step=1,
-        help="Maximum number of reflection retries",
-    )
+@st.cache_resource
+def get_agent(cfg):
+    return JEEAgent(cfg)
 
-    st.sidebar.markdown("---")
 
-    # ── JEE Dataset Filters ──────────────────────────────────────────────
-    st.sidebar.subheader("📚 JEE Dataset Options")
+@st.cache_resource
+def get_evaluator(agent, cfg):
+    return JEEEValuator(agent, cfg)
 
-    try:
-        from benchmark.jee_loader import JEELoader
 
-        all_types = JEELoader.get_problem_types()
-        all_difficulties = ["easy", "medium", "hard"]
-
-        selected_type = st.sidebar.selectbox(
-            "Filter by Problem Type",
-            options=["All"] + all_types,
-            help="Select a specific calculus topic",
-        )
-        selected_difficulty = st.sidebar.selectbox(
-            "Filter by Difficulty",
-            options=["All"] + all_difficulties,
-            help="Filter problems by difficulty level",
-        )
-    except Exception:
-        selected_type = "All"
-        selected_difficulty = "All"
-        st.sidebar.warning("Could not load JEE dataset filters.")
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(
-        "<div style='text-align:center; color:#7f8c8d; font-size:0.8em;'>"
-        "Made with LangGraph + Streamlit + SymPy</div>",
+# ---------------------------------------------------------------------------
+# Render header
+# ---------------------------------------------------------------------------
+def render_header():
+    """Render clean app header with navbar."""
+    st.markdown(
+        """
+        <div class="navbar">
+            <span class="navbar-icon">📐</span>
+            <span class="navbar-title">Math Solver</span>
+        </div>
+        <div style="text-align:center; margin: 24px 0 8px 0;">
+            <h1 style="font-size: 1.5rem; margin-bottom: 6px; font-weight: 800; color: #1a1a2e;">Solve Any Math Problem</h1>
+            <p style="color: #8a8a9a; font-size: 0.9rem; margin-bottom: 0;">
+                Type your problem or upload an image for step-by-step solutions
+            </p>
+        </div>
+        <hr style="margin: 20px 0 24px 0;">
+        """,
         unsafe_allow_html=True,
     )
 
-    from config import Config
 
-    cfg = Config(
-        LLM_API_KEY=api_key,
-        LLM_BASE_URL=base_url,
-        LLM_MODEL=model,
-        TEMPERATURE=temperature,
-        MAX_RETRIES=max_retries,
+# ---------------------------------------------------------------------------
+# Render example problem cards
+# ---------------------------------------------------------------------------
+def render_example_cards(examples):
+    """Render 3 example problem cards with Solve buttons."""
+    st.markdown(
+        """
+        <div style="margin-bottom: 12px;">
+            <h3 style="font-size: 1rem; margin-bottom: 4px;">Example Problems</h3>
+            <p style="color: #8a8a9a; font-size: 0.85rem; margin: 0;">
+                Try one of these curated problems
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    return cfg, selected_type, selected_difficulty
+    cols = st.columns(3)
+    for idx, prob in enumerate(examples):
+        with cols[idx]:
+            ptype = prob["problem_type"]
+            diff = prob["difficulty"]
+            topic_style = TYPE_BADGE_STYLES.get(ptype, "background:#e0e7ff; color:#4f46e5;")
+            diff_style = DIFFICULTY_BADGE_STYLES.get(diff, "background:#f0f0f5; color:#8a8a9a;")
 
-
-# ---------------------------------------------------------------------------
-# Dataset Overview (inline helper)
-# ---------------------------------------------------------------------------
-def render_dataset_overview():
-    """Render a small overview of the JEE dataset in the sidebar."""
-    try:
-        from benchmark.jee_loader import JEELoader
-
-        summary = JEELoader.get_dataset_summary()
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("📊 Dataset Overview")
-        st.sidebar.markdown(f"**Total Problems:** {summary['total_problems']}")
-
-        for diff, count in summary["difficulty_distribution"].items():
-            color = DIFFICULTY_COLORS.get(diff, "#7f8c8d")
-            emoji = DIFFICULTY_EMOJI.get(diff, "⚪")
-            st.sidebar.markdown(
-                f"<span style='color:{color};'>{emoji} {diff.capitalize()}: {count}</span>",
+            st.markdown(
+                f"""
+                <div class="math-card" style="padding: 16px !important; height: 100%;">
+                    <div style="margin-bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
+                        <span class="topic-badge" style="{topic_style}">
+                            {ptype.replace('_', ' ').title()}
+                        </span>
+                        <span class="topic-badge" style="{diff_style}">
+                            {diff.title()}
+                        </span>
+                    </div>
+                    <div style="font-size: 0.85rem; color: #5a5a6a; min-height: 60px; line-height: 1.5;">
+                        {prob['question'][:110]}...
+                    </div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
-    except Exception:
-        pass
+            if st.button("Solve", key=f"example_{idx}", use_container_width=True):
+                st.session_state["problem_input"] = prob["question"]
+                st.session_state["run_mode"] = "agent"
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# Tab 1: Single Problem Solver
+# Render input area
 # ---------------------------------------------------------------------------
-def render_single_problem_tab(cfg):
-    """Render the single JEE problem solver tab with LaTeX support."""
-    st.header("🔷 Single Problem Solver")
+def render_input_area():
+    """Render problem input with image upload and solve button."""
     st.markdown(
-        "Test the JEE agent against a single calculus problem. "
-        "Enter any JEE-level problem below — LaTeX expressions are fully supported."
+        """
+        <div style="margin-bottom: 12px;">
+            <h3 style="font-size: 1rem; margin-bottom: 4px;">Your Problem</h3>
+            <p style="color: #8a8a9a; font-size: 0.85rem; margin: 0;">
+                Type your math problem or upload an image
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # Sample problems dropdown
-    try:
-        from benchmark.jee_loader import JEELoader
-
-        all_problems = JEELoader.load_problems()
-        sample_options = {
-            "Custom (enter your own)": "",
-            **{
-                f"[{p['problem_type'].upper()} | {p['difficulty'].upper()}] {p['question'][:80]}...": p[
-                    "question"
-                ]
-                for p in all_problems[:10]
-            },
-        }
-        selected_sample = st.selectbox(
-            "Choose a sample problem (optional):",
-            options=list(sample_options.keys()),
-            index=0,
-        )
-        default_text = sample_options[selected_sample]
-    except Exception:
-        default_text = r"Evaluate: $\lim_{x \to 0} \frac{\sin(3x) - 3\sin(x)}{x^3}$"
+    if "problem_input" not in st.session_state:
+        st.session_state["problem_input"] = ""
+    if "image_data" not in st.session_state:
+        st.session_state["image_data"] = None
 
     problem = st.text_area(
-        "Enter a JEE calculus problem:",
-        value=default_text,
+        "",
+        value=st.session_state["problem_input"],
         height=120,
-        help="Supports LaTeX math expressions enclosed in $...$",
+        key="problem_text_area",
+        label_visibility="collapsed",
+        placeholder="e.g. Find the derivative of sin(x^2) with respect to x...",
     )
 
-    # Render the problem as LaTeX preview
-    if problem.strip():
-        st.markdown("**Problem Preview:**")
-        st.latex(problem.replace("$", "").replace("\\", "\\"))
+    if problem != st.session_state.get("_last_seen_text", ""):
+        st.session_state["_last_seen_text"] = problem
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        run_agent = st.button(
-            "🤖 Run JEE Agent", use_container_width=True, type="primary"
+    # Image upload (prominent)
+    uploaded_image = st.file_uploader(
+        "",
+        type=["png", "jpg", "jpeg"],
+        key="image_uploader",
+        label_visibility="collapsed",
+    )
+    if uploaded_image is not None:
+        image_bytes = uploaded_image.read()
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        st.session_state["image_data"] = b64
+        # Show preview
+        st.markdown(
+            f"""
+            <div class="img-preview" style="margin-bottom: 12px;">
+                <img src="data:image/png;base64,{b64}" style="width: 100%; max-height: 200px; object-fit: contain; border-radius: 12px;">
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    with col2:
-        run_raw = st.button("📝 Run Raw LLM", use_container_width=True)
+    else:
+        st.session_state["image_data"] = None
 
-    # ── Run Agent ──────────────────────────────────────────────────────────
-    if run_agent:
-        if not cfg.LLM_API_KEY:
-            st.error("Please enter your LLM API Key in the sidebar first!")
-            return
+    # Solve button
+    solve_clicked = st.button("Solve", use_container_width=True, type="primary")
 
-        try:
-            cfg.validate()
-            from agent.graph import MathAgent
+    if solve_clicked:
+        st.session_state["problem_input"] = problem
+        st.session_state["run_mode"] = "agent"
+        st.rerun()
 
-            agent = MathAgent(cfg)
-
-            with st.spinner("Agent is analyzing, planning, and solving symbolically..."):
-                result = agent.solve(problem)
-
-            st.subheader("Agent Result")
-
-            final_answer = result.get("final_answer", "N/A")
-            latex_answer = result.get("latex_answer", "")
-            retries = result.get("retry_count", 0)
-            reasoning_trace = result.get("reasoning_trace", [])
-            steps = result.get("steps", [])
-            problem_type = result.get("problem_type", "")
-            confidence = result.get("confidence", 0)
-            time_taken = result.get("_time_taken", "N/A")
-
-            # ── Metrics row ──────────────────────────────────────────────
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Final Answer", str(final_answer))
-            with m2:
-                st.metric("Confidence", f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "N/A")
-            with m3:
-                st.metric("Time (s)", time_taken)
-            with m4:
-                st.metric("Retries Used", int(retries))
-
-            # ── Problem type badge ───────────────────────────────────────
-            if problem_type:
-                badge_color = PROBLEM_TYPE_COLORS.get(problem_type, "#7f8c8d")
-                st.markdown(
-                    f"<span style='background-color:{badge_color}; color:white; "
-                    f"padding:4px 12px; border-radius:12px; font-size:0.85em;'>"
-                    f"📐 {problem_type.replace('_', ' ').title()}</span>",
-                    unsafe_allow_html=True,
-                )
-
-            # ── LaTeX-formatted answer ───────────────────────────────────
-            if latex_answer:
-                st.markdown("**LaTeX Answer:**")
-                st.latex(latex_answer.replace("$", "").replace("\\", "\\"))
-            elif final_answer and final_answer != "N/A":
-                st.markdown("**Answer:**")
-                try:
-                    st.latex(str(final_answer).replace("$", "").replace("\\", "\\"))
-                except Exception:
-                    st.code(str(final_answer))
-
-            # ── Step-by-step derivation (expandable) ─────────────────────
-            if steps:
-                with st.expander("📋 Step-by-Step Derivation", expanded=False):
-                    for i, step in enumerate(steps, 1):
-                        if isinstance(step, dict):
-                            st.markdown(f"**Step {i}:** {step.get('description', '')}")
-                            if "latex" in step and step["latex"]:
-                                st.latex(step["latex"].replace("$", "").replace("\\", "\\"))
-                            if "result" in step and step["result"]:
-                                st.code(f"Result: {step['result']}")
-                        else:
-                            st.markdown(f"**Step {i}:**")
-                            st.code(str(step))
-                        st.markdown("---")
-
-            # ── Reasoning trace ──────────────────────────────────────────
-            if reasoning_trace:
-                with st.expander("🧠 Full Reasoning Trace", expanded=False):
-                    for i, entry in enumerate(reasoning_trace, 1):
-                        st.markdown(f"**Step {i}:**")
-                        st.code(entry, language="text")
-
-            # ── SymPy code (if available) ────────────────────────────────
-            if result.get("sympy_code"):
-                with st.expander("🔧 SymPy Code Executed", expanded=False):
-                    st.code(result["sympy_code"], language="python")
-                    if result.get("sympy_result"):
-                        st.markdown("**SymPy Output:**")
-                        st.code(result["sympy_result"], language="text")
-
-        except Exception as exc:
-            st.error(f"Agent error: {exc}")
-
-    # ── Run Raw LLM ────────────────────────────────────────────────────────
-    if run_raw:
-        if not cfg.LLM_API_KEY:
-            st.error("Please enter your LLM API Key in the sidebar first!")
-            return
-
-        try:
-            cfg.validate()
-            from langchain_core.messages import HumanMessage
-            from langchain_openai import ChatOpenAI
-
-            llm = ChatOpenAI(
-                base_url=cfg.LLM_BASE_URL,
-                api_key=cfg.LLM_API_KEY,
-                model=cfg.LLM_MODEL,
-                temperature=cfg.TEMPERATURE,
-            )
-
-            with st.spinner("Raw LLM is solving..."):
-                import time
-
-                start = time.time()
-                prompt = f"""You are solving a JEE Advanced calculus problem. Solve step by step and return ONLY the final numerical/symbolic answer. No explanation.
-
-Problem: {problem}
-
-Final Answer (just the expression/number):"""
-                response = llm.invoke([HumanMessage(content=prompt)])
-                elapsed = time.time() - start
-
-            raw_answer = response.content.strip()
-
-            st.subheader("Raw LLM Result")
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric("Answer", raw_answer)
-            with m2:
-                st.metric("Time (s)", f"{elapsed:.2f}")
-
-            # Try to render as LaTeX
-            try:
-                st.markdown("**Answer Preview:**")
-                st.latex(raw_answer.replace("$", "").replace("\\", "\\"))
-            except Exception:
-                st.info(f"Raw LLM response: {raw_answer}")
-
-        except Exception as exc:
-            st.error(f"Raw LLM error: {exc}")
+    return problem
 
 
 # ---------------------------------------------------------------------------
-# Tab 2: JEE Benchmark Runner
+# Render solution panel
 # ---------------------------------------------------------------------------
-def render_benchmark_tab(cfg, selected_type, selected_difficulty):
-    """Render the JEE benchmark testing tab with filtering."""
-    st.header("🔷 JEE Benchmark Runner")
+def render_solution_panel(result: dict | None):
+    """Render the answer and step-by-step solution."""
     st.markdown(
-        "Run the JEE agent and/or raw LLM on the embedded JEE Advanced problem dataset. "
-        "Results include symbolic equivalence checking via SymPy."
+        """
+        <div style="margin-bottom: 12px;">
+            <h3 style="font-size: 1rem; margin-bottom: 4px;">Solution</h3>
+            <p style="color: #8a8a9a; font-size: 0.85rem; margin: 0;">
+                Step-by-step breakdown with final answer
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # ── Dataset info ─────────────────────────────────────────────────────
-    try:
-        from benchmark.jee_loader import JEELoader
-
-        summary = JEELoader.get_dataset_summary()
-
-        info_col1, info_col2, info_col3 = st.columns(3)
-        with info_col1:
-            st.metric("Total Problems", summary["total_problems"])
-        with info_col2:
-            st.metric("Problem Types", len(summary["problem_types"]))
-        with info_col3:
-            st.metric("Topics", len(summary["topics"]))
-
-        # Show filters
-        filter_col1, filter_col2 = st.columns(2)
-        with filter_col1:
-            st.markdown(
-                f"**Problem Type Filter:** `{selected_type}`"
-            )
-        with filter_col2:
-            st.markdown(
-                f"**Difficulty Filter:** `{selected_difficulty}`"
-            )
-
-        # Count filtered problems
-        ptype = None if selected_type == "All" else selected_type
-        pdiff = None if selected_difficulty == "All" else selected_difficulty
-        filtered = JEELoader.load_problems(problem_type=ptype, difficulty=pdiff)
-        st.info(f"📋 **{len(filtered)}** problems match the selected filters.")
-
-    except Exception as exc:
-        st.error(f"Could not load dataset info: {exc}")
-        filtered = []
-
-    # ── Controls ─────────────────────────────────────────────────────────
-    st.markdown("---")
-    control_col1, control_col2, control_col3 = st.columns(3)
-    with control_col1:
-        problem_count = st.number_input(
-            "Number of Problems",
-            min_value=1,
-            max_value=len(filtered) if filtered else 33,
-            value=min(10, len(filtered)) if filtered else 10,
-            step=1,
+    if result is None:
+        st.markdown(
+            """
+            <div class="math-card" style="min-height: 200px; display: flex; align-items: center; justify-content: center;">
+                <div style="text-align: center;">
+                    <div style="font-size: 2.5rem; margin-bottom: 8px; opacity: 0.3;">📝</div>
+                    <div style="color: #aaa; font-size: 0.9rem; font-weight: 500;">
+                        Enter a problem to see the solution
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    with control_col2:
-        mode = st.selectbox(
-            "Mode",
-            options=["Agent Only", "Raw LLM Only", "Both (Compare)"],
-            index=2,
-        )
-    with control_col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        show_symbolic_details = st.checkbox(
-            "Show Symbolic Details", value=True, help="Show SymPy equivalence checking details"
-        )
-
-    mode_map = {
-        "Agent Only": "agent",
-        "Raw LLM Only": "raw_llm",
-        "Both (Compare)": "both",
-    }
-
-    if st.button("▶️ Start JEE Benchmark", type="primary", use_container_width=True):
-        if not cfg.LLM_API_KEY:
-            st.error("Please enter your LLM API Key in the sidebar first!")
-            return
-
-        if not filtered:
-            st.error("No problems match the selected filters.")
-            return
-
-        try:
-            cfg.validate()
-
-            # Build filtered dataset
-            dataset = filtered[: int(problem_count)]
-
-            st.success(f"Loaded {len(dataset)} JEE problems")
-
-            # Initialize agent and evaluator
-            from agent.graph import MathAgent
-            from benchmark.jee_evaluator import JEEEValuator
-
-            agent = MathAgent(cfg)
-            evaluator = JEEEValuator(agent, cfg)
-
-            # Progress tracking
-            progress_bar = st.progress(0.0)
-            status_text = st.empty()
-
-            def progress_callback(current, total):
-                progress_bar.progress(current / total)
-                status_text.text(f"Processing JEE problem {current}/{total}...")
-
-            # Run benchmark
-            with st.spinner("Running JEE benchmark... This may take several minutes."):
-                results = evaluator.run_benchmark(
-                    dataset,
-                    mode=mode_map[mode],
-                    progress_callback=progress_callback,
-                )
-
-            progress_bar.empty()
-            status_text.empty()
-
-            st.success("✅ JEE Benchmark complete!")
-
-            # ── Results Summary ──────────────────────────────────────────
-            st.subheader("📊 Results Summary")
-
-            if "agent" in results:
-                agent_data = results["agent"]
-                a_col1, a_col2, a_col3, a_col4 = st.columns(4)
-                with a_col1:
-                    st.metric("Agent Correct", f"{agent_data['correct']}/{results['total']}")
-                with a_col2:
-                    st.metric("Agent Accuracy", f"{agent_data['accuracy']:.1%}")
-                with a_col3:
-                    st.metric("Avg Time", f"{agent_data['avg_time']}s")
-                with a_col4:
-                    avg_retries = sum(
-                        r.get("retries", 0) for r in agent_data["results"]
-                    ) / max(len(agent_data["results"]), 1)
-                    st.metric("Avg Retries", f"{avg_retries:.1f}")
-
-                # Per-type accuracy
-                if agent_data.get("by_type"):
-                    st.markdown("**Accuracy by Problem Type:**")
-                    type_cols = st.columns(len(agent_data["by_type"]))
-                    for idx, (ptype, data) in enumerate(agent_data["by_type"].items()):
-                        with type_cols[idx]:
-                            color = PROBLEM_TYPE_COLORS.get(ptype, "#7f8c8d")
-                            st.markdown(
-                                f"<div style='text-align:center;'>"
-                                f"<span style='color:{color}; font-size:1.2em;'>●</span> "
-                                f"<b>{ptype.replace('_', ' ').title()}</b><br/>"
-                                f"{data['correct']}/{data['total']} "
-                                f"({data['accuracy']:.0%})</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                # Per-difficulty accuracy
-                if agent_data.get("by_difficulty"):
-                    st.markdown("**Accuracy by Difficulty:**")
-                    diff_cols = st.columns(len(agent_data["by_difficulty"]))
-                    for idx, (diff, data) in enumerate(agent_data["by_difficulty"].items()):
-                        with diff_cols[idx]:
-                            color = DIFFICULTY_COLORS.get(diff, "#7f8c8d")
-                            emoji = DIFFICULTY_EMOJI.get(diff, "⚪")
-                            st.markdown(
-                                f"<div style='text-align:center;'>"
-                                f"{emoji} <b>{diff.capitalize()}</b><br/>"
-                                f"{data['correct']}/{data['total']} "
-                                f"({data['accuracy']:.0%})</div>",
-                                unsafe_allow_html=True,
-                            )
-
-            if "raw_llm" in results:
-                raw_data = results["raw_llm"]
-                st.markdown("---")
-                r_col1, r_col2, r_col3 = st.columns(3)
-                with r_col1:
-                    st.metric("Raw LLM Correct", f"{raw_data['correct']}/{results['total']}")
-                with r_col2:
-                    st.metric("Raw LLM Accuracy", f"{raw_data['accuracy']:.1%}")
-                with r_col3:
-                    st.metric("Avg Time", f"{raw_data['avg_time']}s")
-
-            # Save results
-            try:
-                from benchmark.results import ResultsStore
-
-                store = ResultsStore(cfg.DATA_DIR)
-                filepath = store.save_result(results["run_id"], results)
-                st.success(f"💾 Results saved to: `{filepath}`")
-            except Exception as save_exc:
-                st.warning(f"Could not save results: {save_exc}")
-
-            # ── Per-problem breakdown ────────────────────────────────────
-            with st.expander("📋 Per-Problem Breakdown"):
-                import pandas as pd
-
-                display_results = []
-                if "agent" in results:
-                    for r in results["agent"]["results"]:
-                        row = {
-                            "Problem": r["problem"][:100] + "...",
-                            "Gold Answer": r["gold_answer"],
-                            "Predicted": r["predicted"],
-                            "Correct": "✅" if r["correct"] else "❌",
-                            "Type": r.get("problem_type", ""),
-                            "Difficulty": r.get("difficulty", ""),
-                            "Time(s)": round(r["time_taken"], 2),
-                        }
-                        if show_symbolic_details:
-                            row["Retries"] = r.get("retries", 0)
-                        display_results.append(row)
-
-                if display_results:
-                    df = pd.DataFrame(display_results)
-                    st.dataframe(df, use_container_width=True)
-
-            st.session_state["last_jee_results"] = results
-
-        except Exception as exc:
-            st.error(f"Benchmark error: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Tab 3: Dashboard
-# ---------------------------------------------------------------------------
-def render_dashboard_tab(cfg):
-    """Render the JEE results dashboard with charts and visualizations."""
-    st.header("🔷 JEE Results Dashboard")
-
-    # ── Load saved runs ──────────────────────────────────────────────────
-    try:
-        from benchmark.results import ResultsStore
-
-        store = ResultsStore(cfg.DATA_DIR)
-        runs = store.list_runs()
-    except Exception:
-        runs = []
-
-    if not runs:
-        st.info("📭 No benchmark runs found. Run a JEE benchmark first!")
         return
 
-    # Filter JEE runs
-    jee_runs = [r for r in runs if r["run_id"].startswith("jee_")]
+    final_answer = result.get("final_answer", "N/A")
+    latex_answer = result.get("latex_answer", "")
+    retries = result.get("retry_count", 0)
+    problem_type = result.get("problem_type", "")
+    confidence = result.get("confidence", 0)
+    time_taken = result.get("_time_taken", "N/A")
+    reasoning_trace = result.get("reasoning_trace", [])
+    steps = result.get("steps", [])
+    sympy_code = result.get("sympy_code", "")
+    sympy_result = result.get("sympy_result", "")
+    verification = result.get("verification", "")
+    reflection = result.get("reflection", "")
 
-    if not jee_runs:
-        st.info("📭 No JEE benchmark runs found yet. Run the JEE benchmark first!")
+    answer_display = latex_answer if latex_answer else str(final_answer)
 
-    # ── All Runs Table ───────────────────────────────────────────────────
-    st.subheader("📊 Saved Benchmark Runs")
+    # Final answer box
+    st.markdown(
+        f"""
+        <div class="answer-box">
+            <div class="answer-label">Final Answer</div>
+            <div class="answer-value">{answer_display}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    import pandas as pd
-
-    runs_df = pd.DataFrame(runs)
-    st.dataframe(runs_df, use_container_width=True)
-
-    # ── JEE-specific Dashboard ───────────────────────────────────────────
-    if jee_runs:
-        st.markdown("---")
-        st.subheader("🔷 JEE-Specific Analytics")
-
-        # Load the most recent JEE run for detailed analysis
+    # LaTeX rendering below the answer box
+    if latex_answer:
+        st.latex(latex_answer.replace("$", ""))
+    elif final_answer and final_answer != "N/A":
         try:
-            latest_jee = store.load_result(jee_runs[-1]["run_id"])
+            st.latex(str(final_answer).replace("$", ""))
         except Exception:
-            latest_jee = None
+            st.code(str(final_answer))
 
-        if latest_jee and "agent" in latest_jee:
-            agent_data = latest_jee["agent"]
+    # Metrics row
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Confidence", f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "N/A")
+    with m2:
+        st.metric("Time", f"{time_taken}s" if isinstance(time_taken, (int, float)) else str(time_taken))
+    with m3:
+        st.metric("Retries", int(retries))
 
-            # Overall metrics
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Problems", latest_jee["total"])
-            with m2:
-                st.metric("Accuracy", f"{agent_data['accuracy']:.1%}")
-            with m3:
-                st.metric("Correct", agent_data["correct"])
-            with m4:
-                st.metric("Incorrect", agent_data["incorrect"])
+    # Topic badge
+    if problem_type:
+        topic_style = TYPE_BADGE_STYLES.get(problem_type, "background:#e0e7ff; color:#4f46e5;")
+        st.markdown(
+            f"""
+            <div style="margin: 14px 0; text-align: center;">
+                <span class="topic-badge" style="{topic_style}">
+                    {problem_type.replace('_', ' ').title()}
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-            # ── Problem Type Performance Bar Chart ─────────────────────
-            if agent_data.get("by_type"):
-                st.subheader("📐 Accuracy by Problem Type")
+    # Step-by-step solution
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="margin-bottom: 12px;">
+            <h3 style="font-size: 1rem; margin-bottom: 4px;">Step-by-Step</h3>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-                type_names = list(agent_data["by_type"].keys())
-                type_accs = [
-                    agent_data["by_type"][t]["accuracy"] for t in type_names
-                ]
-                type_totals = [
-                    agent_data["by_type"][t]["total"] for t in type_names
-                ]
-                type_colors = [
-                    PROBLEM_TYPE_COLORS.get(t, "#7f8c8d") for t in type_names
-                ]
-                type_labels = [t.replace("_", " ").title() for t in type_names]
+    if steps:
+        for i, step in enumerate(steps, 1):
+            desc = ""
+            latex = ""
+            step_result = ""
+            if isinstance(step, dict):
+                desc = step.get("description", "")
+                latex = step.get("latex", "")
+                step_result = step.get("result", "")
+            else:
+                desc = str(step)
 
-                fig_types = go.Figure()
-                fig_types.add_trace(
-                    go.Bar(
-                        x=type_labels,
-                        y=type_accs,
-                        marker_color=type_colors,
-                        text=[f"{a:.0%}" for a in type_accs],
-                        textposition="auto",
-                        hovertemplate="<b>%{x}</b><br>Accuracy: %{y:.1%}<br>Problems: %{customdata}<extra></extra>",
-                        customdata=type_totals,
-                    )
-                )
-                fig_types.update_layout(
-                    title="Agent Accuracy by Problem Type",
-                    yaxis=dict(range=[0, 1], tickformat=".0%", title="Accuracy"),
-                    xaxis_title="Problem Type",
-                    height=450,
-                    template="plotly_white",
-                )
-                st.plotly_chart(fig_types, use_container_width=True)
-
-            # ── Difficulty Performance ─────────────────────────────────
-            if agent_data.get("by_difficulty"):
-                st.subheader("🎯 Accuracy by Difficulty")
-
-                diff_names = list(agent_data["by_difficulty"].keys())
-                diff_accs = [
-                    agent_data["by_difficulty"][d]["accuracy"] for d in diff_names
-                ]
-                diff_colors = [
-                    DIFFICULTY_COLORS.get(d, "#7f8c8d") for d in diff_names
-                ]
-                diff_labels = [d.capitalize() for d in diff_names]
-
-                fig_diff = go.Figure()
-                fig_diff.add_trace(
-                    go.Bar(
-                        x=diff_labels,
-                        y=diff_accs,
-                        marker_color=diff_colors,
-                        text=[f"{a:.0%}" for a in diff_accs],
-                        textposition="auto",
-                    )
-                )
-                fig_diff.update_layout(
-                    title="Agent Accuracy by Difficulty Level",
-                    yaxis=dict(range=[0, 1], tickformat=".0%", title="Accuracy"),
-                    xaxis_title="Difficulty",
-                    height=400,
-                    template="plotly_white",
-                )
-                st.plotly_chart(fig_diff, use_container_width=True)
-
-            # ── Difficulty Distribution Pie Chart ──────────────────────
-            st.subheader("📈 Problem Distribution")
-
-            try:
-                from benchmark.jee_loader import JEELoader
-
-                type_dist = JEELoader.get_type_distribution()
-                diff_dist = JEELoader.get_difficulty_distribution()
-
-                pie_col1, pie_col2 = st.columns(2)
-
-                with pie_col1:
-                    fig_pie_type = px.pie(
-                        values=list(type_dist.values()),
-                        names=[t.replace("_", " ").title() for t in type_dist.keys()],
-                        title="Problems by Type",
-                        color_discrete_sequence=list(PROBLEM_TYPE_COLORS.values()),
-                    )
-                    fig_pie_type.update_traces(
-                        textposition="inside", textinfo="percent+label"
-                    )
-                    fig_pie_type.update_layout(height=400)
-                    st.plotly_chart(fig_pie_type, use_container_width=True)
-
-                with pie_col2:
-                    fig_pie_diff = px.pie(
-                        values=list(diff_dist.values()),
-                        names=[d.capitalize() for d in diff_dist.keys()],
-                        title="Problems by Difficulty",
-                        color_discrete_sequence=list(DIFFICULTY_COLORS.values()),
-                    )
-                    fig_pie_diff.update_traces(
-                        textposition="inside", textinfo="percent+label"
-                    )
-                    fig_pie_diff.update_layout(height=400)
-                    st.plotly_chart(fig_pie_diff, use_container_width=True)
-
-            except Exception as dist_exc:
-                st.warning(f"Could not render distribution charts: {dist_exc}")
-
-    # ── Comparison Section ───────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("🔄 Compare Runs")
-
-    run_ids = [r["run_id"] for r in runs]
-    if len(run_ids) >= 2:
-        c1, c2 = st.columns(2)
-        with c1:
-            run1_id = st.selectbox("Select Run 1", run_ids, index=0, key="cmp1")
-        with c2:
-            run2_id = st.selectbox("Select Run 2", run_ids, index=min(1, len(run_ids) - 1), key="cmp2")
-
-        if st.button("Compare Selected Runs"):
-            try:
-                run1 = store.load_result(run1_id)
-                run2 = store.load_result(run2_id)
-
-                # Simple comparison display
-                comp_cols = st.columns(2)
-                for idx, (run, name) in enumerate([(run1, run1_id), (run2, run2_id)]):
-                    with comp_cols[idx]:
-                        st.markdown(f"**{name}**")
-                        if "agent" in run:
-                            st.metric("Agent Accuracy", f"{run['agent']['accuracy']:.1%}")
-                            st.metric("Correct", f"{run['agent']['correct']}/{run['total']}")
-                        if "raw_llm" in run:
-                            st.metric("Raw LLM Accuracy", f"{run['raw_llm']['accuracy']:.1%}")
-
-                # Side-by-side bar chart
-                fig_cmp = go.Figure()
-                categories = []
-                acc1_vals = []
-                acc2_vals = []
-
-                for key in ["agent", "raw_llm"]:
-                    if key in run1 and key in run2:
-                        categories.append(key.replace("_", " ").title())
-                        acc1_vals.append(run1[key]["accuracy"])
-                        acc2_vals.append(run2[key]["accuracy"])
-
-                if categories:
-                    fig_cmp.add_trace(
-                        go.Bar(
-                            name=run1_id[:20],
-                            x=categories,
-                            y=acc1_vals,
-                            marker_color="#3498db",
-                        )
-                    )
-                    fig_cmp.add_trace(
-                        go.Bar(
-                            name=run2_id[:20],
-                            x=categories,
-                            y=acc2_vals,
-                            marker_color="#e74c3c",
-                        )
-                    )
-                    fig_cmp.update_layout(
-                        title="Accuracy Comparison",
-                        yaxis=dict(range=[0, 1], tickformat=".0%"),
-                        barmode="group",
-                        height=400,
-                        template="plotly_white",
-                    )
-                    st.plotly_chart(fig_cmp, use_container_width=True)
-
-            except Exception as exc:
-                st.error(f"Comparison error: {exc}")
-    else:
-        st.info("Need at least 2 saved runs to compare. Run more benchmarks!")
-
-    # ── Historical Summary ───────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("📈 Historical Summary")
-
-    if runs:
-        agent_accs = [r["agent_accuracy"] for r in runs if r["agent_accuracy"] > 0]
-        raw_accs = [r["raw_accuracy"] for r in runs if r["raw_accuracy"] > 0]
-
-        hist_col1, hist_col2, hist_col3 = st.columns(3)
-        with hist_col1:
-            if agent_accs:
-                st.metric("Best Agent Accuracy", f"{max(agent_accs):.1%}")
-        with hist_col2:
-            if raw_accs:
-                st.metric("Best Raw LLM Accuracy", f"{max(raw_accs):.1%}")
-        with hist_col3:
-            st.metric("Total Runs", len(runs))
-
-        # Time series chart
-        if len(runs) > 1:
-            ts_df = pd.DataFrame(runs)
-            ts_fig = go.Figure()
-            if any(ts_df["agent_accuracy"] > 0):
-                ts_fig.add_trace(
-                    go.Scatter(
-                        x=ts_df["timestamp"],
-                        y=ts_df["agent_accuracy"],
-                        mode="lines+markers",
-                        name="Agent Accuracy",
-                        line=dict(color="#3498db", width=3),
-                        marker=dict(size=8),
-                    )
-                )
-            if any(ts_df["raw_accuracy"] > 0):
-                ts_fig.add_trace(
-                    go.Scatter(
-                        x=ts_df["timestamp"],
-                        y=ts_df["raw_accuracy"],
-                        mode="lines+markers",
-                        name="Raw LLM Accuracy",
-                        line=dict(color="#e74c3c", width=3),
-                        marker=dict(size=8),
-                    )
-                )
-            ts_fig.update_layout(
-                title="Accuracy Over Time",
-                xaxis_title="Timestamp",
-                yaxis_title="Accuracy",
-                yaxis=dict(range=[0, 1], tickformat=".0%"),
-                height=450,
-                template="plotly_white",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            st.markdown(
+                f"""
+                <div class="step-card">
+                    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                        <span class="step-number">{i}</span>
+                        <span class="step-title">{desc}</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.plotly_chart(ts_fig, use_container_width=True)
+            if latex:
+                st.latex(latex.replace("$", ""))
+            if step_result:
+                st.markdown(f"<div style='color:#5a5a6a; font-size:0.9rem; margin-left:40px;'>{step_result}</div>", unsafe_allow_html=True)
+    elif reasoning_trace:
+        for i, item in enumerate(reasoning_trace, 1):
+            st.markdown(
+                f"""
+                <div class="step-card">
+                    <div style="display: flex; align-items: center;">
+                        <span class="step-number">{i}</span>
+                        <span class="step-title">{str(item)}</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            """
+            <div style="color: #8a8a9a; font-size: 0.9rem; text-align: center; padding: 20px;">
+                No step details available for this solution.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # Thinking / internals expander
+    internals = []
+    if sympy_code:
+        internals.append(("SymPy Code", sympy_code))
+    if sympy_result:
+        internals.append(("SymPy Output", sympy_result))
+    if verification:
+        internals.append(("Verification", verification))
+    if reflection:
+        internals.append(("Reflection", reflection))
+
+    if internals:
+        with st.expander("View Engine Details", expanded=False):
+            for name, content in internals:
+                st.markdown(
+                    f"""
+                    <div style="color:#6366f1; font-family:'Inter',sans-serif; font-size:0.8rem; font-weight:600; margin: 14px 0 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        {name}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.code(str(content), language="python" if name == "SymPy Code" else "text")
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
+# Run agent
+# ---------------------------------------------------------------------------
+def run_agent(problem: str, cfg: Config):
+    """Run the JEEAgent on a problem and return result dict."""
+    agent = get_agent(cfg)
+    image_data = st.session_state.get("image_data")
+    result = agent.solve(problem, image_data=image_data)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main app
 # ---------------------------------------------------------------------------
 def main():
-    """Main entry point for the JEE Streamlit app."""
-    st.title("🔷 JEE Advanced Math Reasoning Agent")
-    st.markdown(
-        "A LangGraph-powered agent for solving **JEE Advanced calculus problems** "
-        "with symbolic mathematics, LaTeX rendering, and SymPy verification."
-    )
+    # Header
+    render_header()
 
-    cfg, selected_type, selected_difficulty = sidebar_config()
-    render_dataset_overview()
+    # Config
+    cfg = get_config()
+    try:
+        cfg.validate()
+    except ValueError as exc:
+        st.error(f"⚠️ {exc}")
+        st.stop()
 
-    tab1, tab2, tab3 = st.tabs(
-        ["🔷 Single Problem", "📊 JEE Benchmark", "📈 Dashboard"]
-    )
+    # ---- TWO COLUMN LAYOUT ----
+    left_col, right_col = st.columns([1, 1.2])
 
-    with tab1:
-        render_single_problem_tab(cfg)
+    with left_col:
+        # Input area
+        problem = render_input_area()
 
-    with tab2:
-        render_benchmark_tab(cfg, selected_type, selected_difficulty)
+        st.markdown("<hr>", unsafe_allow_html=True)
 
-    with tab3:
-        render_dashboard_tab(cfg)
+        # Example problems
+        examples = get_example_problems()
+        render_example_cards(examples)
+
+    with right_col:
+        # Solution panel (always visible, updates when solved)
+        run_mode = st.session_state.get("run_mode")
+        problem_to_solve = st.session_state.get("problem_input", "")
+        image_data = st.session_state.get("image_data")
+
+        if run_mode == "agent" and (problem_to_solve or image_data):
+            # Show processing state
+            st.markdown(
+                """
+                <div class="math-card" style="text-align: center; padding: 60px 24px;">
+                    <div style="margin-bottom: 16px;">
+                        <span class="processing-pill">
+                            <span class="dot-pulse"></span>
+                            <span class="dot-pulse"></span>
+                            <span class="dot-pulse"></span>
+                            Solving...
+                        </span>
+                    </div>
+                    <div style="color: #8a8a9a; font-size: 0.85rem;">
+                        Running symbolic computation and verification
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            with st.spinner(""):
+                try:
+                    result = run_agent(problem_to_solve, cfg)
+                    st.session_state["last_result"] = result
+                    st.session_state["run_mode"] = None
+                    st.rerun()
+                except Exception as exc:
+                    st.session_state["run_mode"] = None
+                    st.error(f"Agent error: {exc}")
+        else:
+            result = st.session_state.get("last_result")
+            render_solution_panel(result)
 
 
 if __name__ == "__main__":

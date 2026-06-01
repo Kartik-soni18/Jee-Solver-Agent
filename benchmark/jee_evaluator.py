@@ -32,7 +32,7 @@ class JEEEValuator:
             temperature=0.1,
         )
 
-    def run_agent_on_problem(self, problem: str) -> dict:
+    def run_agent_on_problem(self, problem: str, image_data: str = None) -> dict:
         """Run the agent on a single JEE problem.
 
         Args:
@@ -44,7 +44,7 @@ class JEEEValuator:
         """
         start = time.time()
         try:
-            result = self.agent.solve(problem)
+            result = self.agent.solve(problem, image_data=image_data)
             elapsed = time.time() - start
             return {
                 "answer": result.get("final_answer", ""),
@@ -101,12 +101,80 @@ Final Answer (just the expression/number):"""
             }
 
     @staticmethod
+    def normalize_answer(ans: str) -> any:
+        """Normalize an answer string into a comparable Python object.
+
+        Handles symbolic expressions, integers, rationals, coordinates,
+        sets, lists, matrices, and booleans.
+        """
+        if not ans:
+            return ""
+        s = str(ans).strip().lower().replace("$", "").replace("\\", "")
+
+        # Try coordinate / tuple: (1, 2) or (3, 4, 5)
+        tuple_match = re.match(r"^\s*\(([^)]+)\)\s*$", s)
+        if tuple_match:
+            parts = [p.strip() for p in tuple_match.group(1).split(",")]
+            try:
+                import sympy as sp
+                return tuple(sp.sympify(p) for p in parts)
+            except Exception:
+                return tuple(parts)
+
+        # Try set: {1, 2, 3}
+        set_match = re.match(r"^\s*\{([^}]+)\}\s*$", s)
+        if set_match:
+            parts = [p.strip() for p in set_match.group(1).split(",")]
+            try:
+                import sympy as sp
+                return frozenset(sp.sympify(p) for p in parts)
+            except Exception:
+                return frozenset(parts)
+
+        # Try list / matrix: [1, 2, 3] or [[1,2],[3,4]]
+        list_match = re.match(r"^\s*\[([\s\S]+)\]\s*$", s)
+        if list_match:
+            inner = list_match.group(1).strip()
+            # Simple heuristic: if it contains '],[' it's a matrix
+            if "],[" in inner or "], [" in inner:
+                try:
+                    import ast
+                    return ast.literal_eval(s)
+                except Exception:
+                    pass
+            parts = [p.strip() for p in inner.split(",")]
+            try:
+                import sympy as sp
+                return [sp.sympify(p) for p in parts]
+            except Exception:
+                return parts
+
+        # Try boolean
+        if s in ("true", "yes", "t"):
+            return True
+        if s in ("false", "no", "f"):
+            return False
+
+        # Try integer / rational
+        try:
+            import sympy as sp
+            return sp.Rational(s)
+        except Exception:
+            pass
+
+        # Fallback: symbolic expression
+        try:
+            import sympy as sp
+            return sp.sympify(s)
+        except Exception:
+            return s
+
+    @staticmethod
     def check_symbolic_equivalence(predicted: str, gold: str) -> bool:
         """Check if two symbolic expressions are equivalent using SymPy.
 
-        First tries direct string match, then SymPy symbolic comparison,
-        then numerical evaluation at random points, then normalized
-        string comparison as a fallback.
+        Handles multiple answer types: symbolic, integer, rational,
+        coordinate tuples, sets, lists, matrices, and booleans.
 
         Args:
             predicted: The predicted answer string.
@@ -119,14 +187,72 @@ Final Answer (just the expression/number):"""
             return False
 
         # Normalize strings
-        pred = str(predicted).strip().lower().replace("$", "")
-        gold = str(gold).strip().lower().replace("$", "")
+        pred_raw = str(predicted).strip().lower().replace("$", "")
+        gold_raw = str(gold).strip().lower().replace("$", "")
 
         # Direct match
-        if pred == gold:
+        if pred_raw == gold_raw:
             return True
 
-        # Try SymPy symbolic comparison
+        # Normalize to typed objects
+        pred_obj = JEEEValuator.normalize_answer(pred_raw)
+        gold_obj = JEEEValuator.normalize_answer(gold_raw)
+
+        # Same-type comparison
+        if type(pred_obj) is type(gold_obj):
+            # Tuples / coordinates
+            if isinstance(pred_obj, tuple):
+                if len(pred_obj) != len(gold_obj):
+                    return False
+                import sympy as sp
+                for p, g in zip(pred_obj, gold_obj):
+                    try:
+                        if sp.simplify(p - g) != 0:
+                            return False
+                    except Exception:
+                        if str(p) != str(g):
+                            return False
+                return True
+
+            # Sets
+            if isinstance(pred_obj, frozenset):
+                if len(pred_obj) != len(gold_obj):
+                    return False
+                import sympy as sp
+                for p in pred_obj:
+                    found = False
+                    for g in gold_obj:
+                        try:
+                            if sp.simplify(p - g) == 0:
+                                found = True
+                                break
+                        except Exception:
+                            if str(p) == str(g):
+                                found = True
+                                break
+                    if not found:
+                        return False
+                return True
+
+            # Lists / matrices
+            if isinstance(pred_obj, list):
+                if len(pred_obj) != len(gold_obj):
+                    return False
+                import sympy as sp
+                for p, g in zip(pred_obj, gold_obj):
+                    try:
+                        if sp.simplify(p - g) != 0:
+                            return False
+                    except Exception:
+                        if str(p) != str(g):
+                            return False
+                return True
+
+            # Booleans
+            if isinstance(pred_obj, bool):
+                return pred_obj == gold_obj
+
+        # SymPy symbolic comparison (works for Expr, Rational, Integer)
         try:
             import sympy as sp
 
@@ -135,20 +261,19 @@ Final Answer (just the expression/number):"""
             pi = sp.pi
             E = sp.E
 
-            # Parse both expressions
-            pred_expr = sp.sympify(pred)
-            gold_expr = sp.sympify(gold)
+            pred_expr = sp.sympify(pred_raw)
+            gold_expr = sp.sympify(gold_raw)
 
-            # Check symbolic equivalence
+            # Direct equals
             if pred_expr.equals(gold_expr):
                 return True
 
-            # Check simplified difference
+            # Simplified difference
             diff = sp.simplify(pred_expr - gold_expr)
             if diff == 0:
                 return True
 
-            # Check numerical equivalence at random points
+            # Numerical equivalence at random points
             import random
 
             for _ in range(5):
@@ -164,6 +289,15 @@ Final Answer (just the expression/number):"""
         except Exception:
             pass
 
+        # Numerical tolerance for float-like answers
+        try:
+            pred_f = float(pred_raw)
+            gold_f = float(gold_raw)
+            if abs(pred_f - gold_f) < 1e-4:
+                return True
+        except Exception:
+            pass
+
         # Fallback: normalized string comparison
         def normalize(s):
             s = re.sub(r"\s+", "", s)
@@ -171,9 +305,10 @@ Final Answer (just the expression/number):"""
             s = s.replace("atan", "arctan")
             s = s.replace("asin", "arcsin")
             s = s.replace("acos", "arccos")
+            s = s.replace("pi", "π")
             return s
 
-        return normalize(pred) == normalize(gold)
+        return normalize(pred_raw) == normalize(gold_raw)
 
     def run_benchmark(
         self,
